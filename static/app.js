@@ -1,41 +1,42 @@
-// Sit Straight App Logic (Python-Connected WebSocket Client)
+const APP_NAME = "Sit Straight";
+const STORAGE_KEY = "sitstraight_calibration";
+const FRAME_INTERVAL_MS = 80;
+const JPEG_QUALITY = 0.6;
+const SLOUCH_THRESHOLD = 90;
+const ALERT_DELAY_MS = 10000;
+const NOTIFICATION_COOLDOWN_MS = 15000;
+const WS_RECONNECT_DELAY_MS = 3000;
 
-// DOM Elements
 const video = document.getElementById('webcam');
 const canvas = document.getElementById('pose-canvas');
 const ctx = canvas.getContext('2d');
 const cameraLoading = document.getElementById('camera-loading');
-
-const statusBadge = document.getElementById('status-badge') || { textContent: '', className: '' };
 const btnCalibrate = document.getElementById('btn-calibrate');
 const btnReset = document.getElementById('btn-reset-calibration');
 const calibrationStatus = document.getElementById('calibration-status');
 const btnNotifications = document.getElementById('btn-notifications');
 const alertOverlay = document.getElementById('slouch-alert-overlay');
-
 const calibrationOverlay = document.getElementById('calibration-overlay');
 const countdownText = document.getElementById('countdown-text');
 
-// Offscreen Canvas for Frame Extraction
 const offscreenCanvas = document.createElement('canvas');
 const offscreenCtx = offscreenCanvas.getContext('2d');
-offscreenCanvas.width = 320; // 320x240 is fast to decode and transmit
+offscreenCanvas.width = 320;
 offscreenCanvas.height = 240;
 
-// Application State
 let activeStream = null;
 let calibrationData = null;
 let isCalibrated = false;
 let isWebcamActive = false;
 let ws = null;
 let shouldCalibrateFrame = false;
+let frameIntervalId = null;
 
 let currentScore = 100;
 let lastAlertTime = 0;
 let slouchStartTime = null;
 let isAlertActive = false;
 
-// Notifications
 let notificationsEnabled = false;
 if (Notification.permission === 'granted') {
   notificationsEnabled = true;
@@ -52,15 +53,14 @@ btnNotifications.addEventListener('click', async () => {
       btnNotifications.textContent = 'Notifications Enabled';
       btnNotifications.classList.remove('btn-secondary');
       btnNotifications.classList.add('btn-primary');
-      new Notification("Sit Straight", { body: "System notifications are active!" });
+      new Notification(APP_NAME, { body: "System notifications are active!" });
     }
   } else if (Notification.permission === 'granted') {
     notificationsEnabled = true;
   }
 });
 
-// Load Calibration from LocalStorage on load
-const savedCalibration = localStorage.getItem('auraposture_calibration');
+const savedCalibration = localStorage.getItem(STORAGE_KEY);
 if (savedCalibration) {
   try {
     calibrationData = JSON.parse(savedCalibration);
@@ -76,31 +76,37 @@ let sirenOsc = null;
 let sirenGain = null;
 let lfo = null;
 
-function startSiren() {
-  if (sirenOsc) return; // already playing
-
+function getAudioContext() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-
   if (audioCtx.state === 'suspended') {
     audioCtx.resume();
   }
+  return audioCtx;
+}
 
-  sirenGain = audioCtx.createGain();
-  sirenGain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-  sirenGain.connect(audioCtx.destination);
+window.addEventListener('click', () => getAudioContext());
 
-  sirenOsc = audioCtx.createOscillator();
+function startSiren() {
+  if (sirenOsc) return;
+
+  const ctx = getAudioContext();
+
+  sirenGain = ctx.createGain();
+  sirenGain.gain.setValueAtTime(0.2, ctx.currentTime);
+  sirenGain.connect(ctx.destination);
+
+  sirenOsc = ctx.createOscillator();
   sirenOsc.type = 'sawtooth';
-  sirenOsc.frequency.setValueAtTime(550, audioCtx.currentTime);
+  sirenOsc.frequency.setValueAtTime(550, ctx.currentTime);
   sirenOsc.connect(sirenGain);
 
-  lfo = audioCtx.createOscillator();
-  lfo.frequency.value = 2; // oscillations per second
+  lfo = ctx.createOscillator();
+  lfo.frequency.value = 2;
 
-  const lfoGain = audioCtx.createGain();
-  lfoGain.gain.value = 150; // Pitch swing range
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = 150;
 
   lfo.connect(lfoGain);
   lfoGain.connect(sirenOsc.frequency);
@@ -113,7 +119,10 @@ function stopSiren() {
   if (sirenOsc) {
     try {
       sirenOsc.stop();
+      sirenOsc.disconnect();
       lfo.stop();
+      lfo.disconnect();
+      sirenGain.disconnect();
     } catch (e) { }
     sirenOsc = null;
     lfo = null;
@@ -121,45 +130,15 @@ function stopSiren() {
   }
 }
 
-// Auto-resume AudioContext on user click to bypass browser autoplay policies
-window.addEventListener('click', () => {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-});
-
-function updateStatusBadge() {
-  if (isAlertActive) {
-    statusBadge.textContent = 'ALERT';
-    statusBadge.className = 'badge badge-warning';
-  } else if (!ws || ws.readyState !== WebSocket.OPEN) {
-    statusBadge.textContent = 'Disconnected';
-    statusBadge.className = 'badge badge-warning';
-  } else if (isCalibrated) {
-    statusBadge.textContent = '';
-    statusBadge.className = 'badge badge-calibrated';
-  } else {
-    statusBadge.textContent = 'Ready';
-    statusBadge.className = 'badge';
-  }
-}
-
-// WebSocket Connection Setup
+// --- WebSocket Connection ---
 function connectBackend() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-  statusBadge.textContent = 'Connecting...';
-  statusBadge.className = 'badge';
-
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
-    console.log("[Sit Straight] WebSocket connected to Python backend");
-    // Send stored calibration baseline if we have it
+    console.log(`[${APP_NAME}] WebSocket connected`);
     ws.send(JSON.stringify({
       action: "init",
       calibrationData: calibrationData
@@ -169,7 +148,6 @@ function connectBackend() {
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
-    // Clear and prepare canvas
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -183,42 +161,38 @@ function connectBackend() {
         updateCalibrationUI();
       } else {
         isCalibrated = false;
-        statusBadge.textContent = 'Ready';
-        statusBadge.className = 'badge';
       }
-      updateStatusBadge();
     } else if (data.status === "reset") {
       isCalibrated = false;
-      updateStatusBadge();
     } else if (data.status === "no_body") {
-      updateScoreDisplay(null);
+      updateScore(null);
+      if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "partial_body") {
-      updateScoreDisplay(null);
-      calibrationStatus.textContent = 'Body only partially visible.';
-      calibrationStatus.className = 'status-message text-danger';
+      updateScore(null);
+      setStatusMessage('Body only partially visible — move closer.', 'text-danger');
+      if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "calibrated") {
       calibrationData = data.calibrationData;
-      localStorage.setItem('auraposture_calibration', JSON.stringify(calibrationData));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(calibrationData));
       isCalibrated = true;
       updateCalibrationUI();
-      updateStatusBadge();
     } else if (data.status === "tracking") {
-      updateScoreDisplay(data.score);
+      updateScore(data.score);
     } else if (data.status === "ready_to_calibrate") {
-      updateScoreDisplay(null);
+      updateScore(null);
     }
 
     ctx.restore();
   };
 
   ws.onclose = () => {
-    console.log("[Sit Straight] WebSocket disconnected. Retrying in 3 seconds...");
-    updateStatusBadge();
-    setTimeout(connectBackend, 3000);
+    console.log(`[${APP_NAME}] WebSocket disconnected. Retrying in ${WS_RECONNECT_DELAY_MS / 1000}s...`);
+    ws = null;
+    setTimeout(connectBackend, WS_RECONNECT_DELAY_MS);
   };
 }
 
-// Start camera stream
+// --- Camera ---
 async function startCamera() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -236,26 +210,23 @@ async function startCamera() {
       cameraLoading.classList.add('hidden');
       btnCalibrate.disabled = false;
 
-      // Stream camera frames to WebSocket at 12 FPS
-      setInterval(streamFrame, 80);
+      if (!frameIntervalId) {
+        frameIntervalId = setInterval(streamFrame, FRAME_INTERVAL_MS);
+      }
     });
   } catch (error) {
     console.error('Error opening webcam:', error);
-    calibrationStatus.textContent = 'Webcam error: Please check browser permissions.';
-    calibrationStatus.className = 'status-message text-danger';
+    setStatusMessage('Webcam error: Please check browser permissions.', 'text-danger');
   }
 }
 
-// Extract frame, compress as JPEG, and send to Python server
+// --- Frame Streaming ---
 function streamFrame() {
   if (!isWebcamActive || !ws || ws.readyState !== WebSocket.OPEN) return;
   if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
 
-  // Render video frame to offscreen canvas
   offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
-
-  // Convert to highly-compressed light jpeg data URL
-  const dataUrl = offscreenCanvas.toDataURL('image/jpeg', 0.6);
+  const dataUrl = offscreenCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
 
   const actionType = shouldCalibrateFrame ? 'calibrate' : 'frame';
   if (shouldCalibrateFrame) {
@@ -268,7 +239,7 @@ function streamFrame() {
   }));
 }
 
-// Draw skeleton using coordinates received from server
+// --- Skeleton Drawing ---
 function drawSkeleton(landmarks) {
   const nose = landmarks["0"];
   const lEar = landmarks["7"];
@@ -281,15 +252,15 @@ function drawSkeleton(landmarks) {
   const points = [nose, lEar, rEar, lShoulder, rShoulder];
 
   ctx.lineWidth = 2;
-  ctx.strokeStyle = '#dc2626'; // solid red lines, no glow
+  ctx.strokeStyle = '#dc2626';
 
-  // Draw shoulders line
+  // Shoulders line
   ctx.beginPath();
   ctx.moveTo(lShoulder.x * canvas.width, lShoulder.y * canvas.height);
   ctx.lineTo(rShoulder.x * canvas.width, rShoulder.y * canvas.height);
   ctx.stroke();
 
-  // Draw spine connector
+  // Spine connector
   const midShoulderX = (lShoulder.x + rShoulder.x) / 2;
   const midShoulderY = (lShoulder.y + rShoulder.y) / 2;
   ctx.beginPath();
@@ -297,14 +268,14 @@ function drawSkeleton(landmarks) {
   ctx.lineTo(nose.x * canvas.width, nose.y * canvas.height);
   ctx.stroke();
 
-  // Draw face connector
+  // Face connector
   ctx.beginPath();
   ctx.moveTo(lEar.x * canvas.width, lEar.y * canvas.height);
   ctx.lineTo(nose.x * canvas.width, nose.y * canvas.height);
   ctx.lineTo(rEar.x * canvas.width, rEar.y * canvas.height);
   ctx.stroke();
 
-  // Draw joints (smaller and red, no glow)
+  // Joints
   points.forEach((pt) => {
     ctx.fillStyle = '#dc2626';
     ctx.beginPath();
@@ -313,7 +284,7 @@ function drawSkeleton(landmarks) {
   });
 }
 
-// Calibration actions
+// --- Calibration ---
 btnCalibrate.addEventListener('click', () => {
   if (!isWebcamActive) return;
 
@@ -344,11 +315,10 @@ btnReset.addEventListener('click', () => {
   calibrationData = null;
   isCalibrated = false;
   shouldCalibrateFrame = false;
-  localStorage.removeItem('auraposture_calibration');
+  localStorage.removeItem(STORAGE_KEY);
   btnReset.disabled = true;
   btnCalibrate.disabled = false;
-  calibrationStatus.textContent = 'Calibration reset. Please calibrate again.';
-  calibrationStatus.className = 'status-message';
+  setStatusMessage('Calibration reset. Please calibrate again.');
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ action: "reset" }));
@@ -361,22 +331,23 @@ btnReset.addEventListener('click', () => {
 function updateCalibrationUI() {
   btnCalibrate.disabled = true;
   btnReset.disabled = false;
-  calibrationStatus.textContent = '';
-  calibrationStatus.className = 'status-message text-success';
-  updateStatusBadge();
+  setStatusMessage('', 'text-success');
 }
 
-function updateScoreDisplay(score) {
-  if (score === null) {
-    return;
-  }
+function setStatusMessage(text, className = '') {
+  if (!calibrationStatus) return;
+  calibrationStatus.textContent = text;
+  calibrationStatus.className = 'status-message' + (className ? ' ' + className : '');
+  calibrationStatus.style.display = text ? 'block' : 'none';
+}
+
+// --- Score & Alert ---
+function updateScore(score) {
+  if (score === null) return;
 
   currentScore = score;
 
-  // Sensitivity is hardcoded to 10%, meaning slouchThreshold = 90
-  const slouchThreshold = 85;
-
-  if (score >= slouchThreshold) {
+  if (score >= SLOUCH_THRESHOLD) {
     clearAlert();
   } else {
     handleSlouchDetected();
@@ -388,11 +359,9 @@ function handleSlouchDetected() {
     slouchStartTime = Date.now();
   }
 
-  // Alert delay is hardcoded to 10 seconds
-  const cooldownLimit = 10000;
   const elapsed = Date.now() - slouchStartTime;
 
-  if (elapsed >= cooldownLimit) {
+  if (elapsed >= ALERT_DELAY_MS) {
     triggerAlert();
   }
 }
@@ -401,16 +370,13 @@ function triggerAlert() {
   if (isAlertActive) return;
   isAlertActive = true;
 
-  updateStatusBadge();
-
   alertOverlay.classList.remove('hidden');
-
   startSiren();
 
   if (notificationsEnabled && document.hidden) {
     const now = Date.now();
-    if (now - lastAlertTime > 15000) {
-      new Notification("Sit Straight", {
+    if (now - lastAlertTime > NOTIFICATION_COOLDOWN_MS) {
+      new Notification(APP_NAME, {
         body: "Sit up straight to protect your spine.",
         icon: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%23ef4444'/><text x='35' y='65' fill='white' font-size='45' font-weight='bold'>!</text></svg>"
       });
@@ -425,13 +391,10 @@ function clearAlert() {
 
   isAlertActive = false;
   alertOverlay.classList.add('hidden');
-
   stopSiren();
-
-  updateStatusBadge();
 }
 
-// Initialization
+// --- Initialization ---
 window.addEventListener('DOMContentLoaded', () => {
   connectBackend();
   startCamera();
