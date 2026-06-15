@@ -148,7 +148,7 @@ body {
   flex-direction: column;
   gap: 8px;
   align-items: center;
-  z-index: 10;
+  z-index: 30;
 }
 
 .button-row {
@@ -196,20 +196,6 @@ body {
   color: var(--text-primary);
 }
 
-.status-message {
-  display: none;
-  font-size: 13px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.text-danger {
-  color: var(--danger-color);
-}
-
-.text-success {
-  color: var(--success-color);
-}
 
 .alert-overlay {
   position: fixed;

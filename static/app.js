@@ -13,7 +13,6 @@ const ctx = canvas.getContext('2d');
 const cameraLoading = document.getElementById('camera-loading');
 const btnCalibrate = document.getElementById('btn-calibrate');
 const btnReset = document.getElementById('btn-reset-calibration');
-const calibrationStatus = document.getElementById('calibration-status');
 const btnNotifications = document.getElementById('btn-notifications');
 const alertOverlay = document.getElementById('slouch-alert-overlay');
 const calibrationOverlay = document.getElementById('calibration-overlay');
@@ -168,8 +167,6 @@ function connectBackend() {
       updateScore(null);
       if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "partial_body") {
-      updateScore(null);
-      setStatusMessage('Body only partially visible — move closer.', 'text-danger');
       if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "calibrated") {
       calibrationData = data.calibrationData;
@@ -216,7 +213,6 @@ async function startCamera() {
     });
   } catch (error) {
     console.error('Error opening webcam:', error);
-    setStatusMessage('Webcam error: Please check browser permissions.', 'text-danger');
   }
 }
 
@@ -318,7 +314,7 @@ btnReset.addEventListener('click', () => {
   localStorage.removeItem(STORAGE_KEY);
   btnReset.disabled = true;
   btnCalibrate.disabled = false;
-  setStatusMessage('Calibration reset. Please calibrate again.');
+
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ action: "reset" }));
@@ -331,15 +327,8 @@ btnReset.addEventListener('click', () => {
 function updateCalibrationUI() {
   btnCalibrate.disabled = true;
   btnReset.disabled = false;
-  setStatusMessage('', 'text-success');
 }
 
-function setStatusMessage(text, className = '') {
-  if (!calibrationStatus) return;
-  calibrationStatus.textContent = text;
-  calibrationStatus.className = 'status-message' + (className ? ' ' + className : '');
-  calibrationStatus.style.display = text ? 'block' : 'none';
-}
 
 // --- Score & Alert ---
 function updateScore(score) {
