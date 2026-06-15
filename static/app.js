@@ -17,13 +17,14 @@ const btnNotifications = document.getElementById('btn-notifications');
 const alertOverlay = document.getElementById('slouch-alert-overlay');
 const calibrationOverlay = document.getElementById('calibration-overlay');
 const countdownText = document.getElementById('countdown-text');
+const statusBadge = document.getElementById('status-badge');
+const scoreDisplay = document.getElementById('score-display');
 
 const offscreenCanvas = document.createElement('canvas');
 const offscreenCtx = offscreenCanvas.getContext('2d');
 offscreenCanvas.width = 320;
 offscreenCanvas.height = 240;
 
-let activeStream = null;
 let calibrationData = null;
 let isCalibrated = false;
 let isWebcamActive = false;
@@ -42,6 +43,21 @@ if (Notification.permission === 'granted') {
   btnNotifications.textContent = 'Notifications Enabled';
   btnNotifications.classList.remove('btn-secondary');
   btnNotifications.classList.add('btn-primary');
+}
+
+function setStatus(label, variant = 'default') {
+  statusBadge.textContent = label;
+  statusBadge.classList.remove('badge-calibrated', 'badge-warning');
+
+  if (variant === 'calibrated') {
+    statusBadge.classList.add('badge-calibrated');
+  } else if (variant === 'warning') {
+    statusBadge.classList.add('badge-warning');
+  }
+}
+
+function renderScore(score) {
+  scoreDisplay.textContent = score === null ? 'Score --' : `Score ${score}`;
 }
 
 btnNotifications.addEventListener('click', async () => {
@@ -65,6 +81,7 @@ if (savedCalibration) {
     calibrationData = JSON.parse(savedCalibration);
     isCalibrated = true;
     updateCalibrationUI();
+    setStatus('Calibrated', 'calibrated');
   } catch (e) {
     console.error('Failed to parse saved calibration data', e);
   }
@@ -138,6 +155,7 @@ function connectBackend() {
 
   ws.onopen = () => {
     console.log(`[${APP_NAME}] WebSocket connected`);
+    setStatus('Connected');
     ws.send(JSON.stringify({
       action: "init",
       calibrationData: calibrationData
@@ -158,24 +176,32 @@ function connectBackend() {
       if (data.isCalibrated) {
         isCalibrated = true;
         updateCalibrationUI();
+        setStatus('Calibrated', 'calibrated');
       } else {
         isCalibrated = false;
+        setStatus('Ready');
       }
     } else if (data.status === "reset") {
       isCalibrated = false;
+      setStatus('Ready');
+      renderScore(null);
     } else if (data.status === "no_body") {
+      setStatus('No body', 'warning');
       updateScore(null);
       if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "partial_body") {
+      setStatus('Partial body', 'warning');
       if (isWebcamActive) btnCalibrate.disabled = false;
     } else if (data.status === "calibrated") {
       calibrationData = data.calibrationData;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(calibrationData));
       isCalibrated = true;
       updateCalibrationUI();
+      setStatus('Calibrated', 'calibrated');
     } else if (data.status === "tracking") {
       updateScore(data.score);
     } else if (data.status === "ready_to_calibrate") {
+      setStatus('Ready');
       updateScore(null);
     }
 
@@ -185,6 +211,7 @@ function connectBackend() {
   ws.onclose = () => {
     console.log(`[${APP_NAME}] WebSocket disconnected. Retrying in ${WS_RECONNECT_DELAY_MS / 1000}s...`);
     ws = null;
+    setStatus('Disconnected', 'warning');
     setTimeout(connectBackend, WS_RECONNECT_DELAY_MS);
   };
 }
@@ -198,8 +225,8 @@ async function startCamera() {
     });
 
     video.srcObject = stream;
-    activeStream = stream;
     isWebcamActive = true;
+    setStatus('Camera ready');
 
     video.addEventListener('loadedmetadata', () => {
       canvas.width = video.videoWidth;
@@ -321,6 +348,8 @@ btnReset.addEventListener('click', () => {
   }
 
   currentScore = 100;
+  renderScore(null);
+  setStatus('Ready');
   clearAlert();
 });
 
@@ -332,13 +361,19 @@ function updateCalibrationUI() {
 
 // --- Score & Alert ---
 function updateScore(score) {
-  if (score === null) return;
+  if (score === null) {
+    renderScore(null);
+    return;
+  }
 
   currentScore = score;
+  renderScore(currentScore);
 
-  if (score >= SLOUCH_THRESHOLD) {
+  if (currentScore >= SLOUCH_THRESHOLD) {
+    setStatus('Good', 'calibrated');
     clearAlert();
   } else {
+    setStatus('Slouching', 'warning');
     handleSlouchDetected();
   }
 }
