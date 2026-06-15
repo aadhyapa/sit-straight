@@ -119,7 +119,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 required_joints = [nose, l_ear, r_ear, l_shoulder, r_shoulder]
                 all_visible = all(joint.visibility > VISIBILITY_THRESHOLD for joint in required_joints)
 
-                # Prepare coordinates to return to client for custom SVG skeleton drawing
+                # Prepare coordinates to return to client for canvas skeleton drawing
                 landmarks_dict = {
                     "0":  {"x": nose.x,       "y": nose.y,       "visibility": float(nose.visibility)},
                     "7":  {"x": l_ear.x,      "y": l_ear.y,      "visibility": float(l_ear.visibility)},
@@ -139,12 +139,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 if action == "calibrate":
                     shoulder_y = (l_shoulder.y + r_shoulder.y) / 2.0
                     head_offset = shoulder_y - nose.y
-                    shoulder_distance = abs(l_shoulder.x - r_shoulder.x)
-
                     calibration_data = {
                         "shoulderY": shoulder_y,
-                        "headOffset": head_offset,
-                        "shoulderDistance": shoulder_distance
+                        "headOffset": head_offset
                     }
 
                     logger.info(f"New calibration captured: {calibration_data}")

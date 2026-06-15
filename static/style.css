@@ -52,7 +52,15 @@ body {
   pointer-events: auto;
 }
 
-.badge {
+.status-panel {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.badge,
+.score-display {
   font-family: var(--font-mono);
   font-size: 16px;
   font-weight: 700;
@@ -61,7 +69,6 @@ body {
   background: none;
   border: none;
   padding: 0;
-  pointer-events: auto;
 }
 
 .badge-calibrated {

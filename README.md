@@ -21,8 +21,8 @@ Everything runs locally. No video ever leaves your machine.
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourname/slouch-detector.git
-cd slouch-detector
+git clone https://github.com/yourname/sit-straight.git
+cd sit-straight
 
 # Install dependencies
 pip install -r requirements.txt
@@ -64,7 +64,7 @@ A score below **90** sustained for **10 seconds** triggers an alert.
 ## Project Structure
 
 ```
-slouch-detector/
+sit-straight/
 ├── app.py                  # FastAPI backend + WebSocket + pose analysis
 ├── requirements.txt
 ├── pose_landmarker.task    # MediaPipe model (download separately)
